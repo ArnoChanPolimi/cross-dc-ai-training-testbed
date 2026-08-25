@@ -1,183 +1,133 @@
 # Cross-Datacenter AI Training Testbed
 
-> An end-to-end experimental platform for understanding how distributed GPU training behaves when collective communication crosses a dynamic wide-area network.
+> An end-to-end platform for understanding—and reducing—the communication bottleneck that appears when distributed GPU training crosses a dynamic wide-area network.
 
 ## Start with the basic problem
 
-A large AI model may not fit, or train efficiently, on a single GPU. Distributed training solves this by splitting the work across multiple GPU workers.
+Large AI models are commonly trained across multiple GPUs. The GPUs compute locally, but repeatedly exchange parameters and gradients. When workers are split across datacenters, these collective transfers traverse a WAN whose bandwidth, delay, congestion, and available paths change over time.
 
-The GPUs do not work independently. During every training step, they must repeatedly exchange model parameters and gradients. If that exchange is slow, the GPUs wait—even when their compute cores are otherwise ready.
+This testbed connects the complete chain—from PyTorch FSDP tensors, through NCCL/MSCCL and GPUDirect RDMA, to a programmable multipath WAN—so communication decisions and network conditions can be controlled, observed, and evaluated together.
 
-This project studies that communication bottleneck when the GPU workers are separated across datacenters.
+## 1. Why training depends on collective communication
 
-## 1. Why distributed training needs collective communication
+**PyTorch Fully Sharded Data Parallel (FSDP)** divides model state across workers. Before computation, **All-Gather** reconstructs the required parameter on every worker. During backpropagation, **Reduce-Scatter** aggregates gradients and returns the appropriate reduced shard.
 
-The testbed uses **PyTorch Fully Sharded Data Parallel (FSDP)**. FSDP divides model state across workers so that each GPU stores only a shard instead of a complete copy.
+<p align="center"><img src="figures/fsdp-all-gather.png" width="680" alt="All-Gather reconstructs the complete parameter on every GPU"></p>
 
-Before a GPU can compute with a sharded parameter, the workers perform an **All-Gather**. Every worker contributes its local shard, and every worker receives the complete parameter needed for computation.
-
-![All-Gather reconstructs the complete parameter on every GPU](figures/fsdp-all-gather.png)
-
-During the backward pass, workers produce gradients for the same model parameters. **Reduce-Scatter** aggregates those gradients and returns the appropriate reduced shard to each worker.
-
-![Reduce-Scatter aggregates gradients and returns one shard to each GPU](figures/fsdp-reduce-scatter.png)
-
-These are not occasional control messages. They move large tensors and sit directly on the critical path of training:
+<p align="center"><img src="figures/fsdp-reduce-scatter.png" width="680" alt="Reduce-Scatter aggregates gradients and returns one shard to each GPU"></p>
 
 ```text
 All-Gather → forward compute → backward compute → Reduce-Scatter → next step
 ```
 
-The communication system therefore affects both GPU utilization and the time required to complete every training step.
+These operations move large tensors on every step. Slow communication leaves GPUs waiting and directly increases training-step time.
 
 ## 2. Why crossing datacenters changes the problem
 
-Inside one datacenter, GPU communication normally uses a fast and relatively predictable network fabric. Across datacenters, the same collective transfers encounter a WAN with:
+Across datacenters, collective transfers encounter lower bandwidth, longer delay, competing traffic, congestion, and heterogeneous paths. The testbed places four GPU workers across two logical datacenters and connects them through a programmable multipath WAN. Path capacity, propagation delay, queues, and background load can be controlled and replayed.
 
-- lower and time-varying available bandwidth;
-- longer propagation delay;
-- competing background traffic;
-- queueing and congestion feedback;
-- multiple paths with different conditions.
+<p align="center"><img src="figures/cross-dc-testbed-overview.svg" width="720" alt="Four GPU workers connected through a programmable multipath WAN"></p>
 
-The testbed places four GPU workers across two logical datacenters and connects them through a programmable multipath WAN.
+## 3. Closing the loop across two layers
 
-![Four GPU workers connected through a programmable multipath WAN](figures/cross-dc-testbed-overview.svg)
+The collective layer decides which data is ready, where it moves, and which operations depend on earlier transfers. The WAN layer decides which path carries each flow and how much usable capacity that path provides.
 
-The WAN is not treated as a black box. Its paths, bandwidth, delay, queues, and background load can be controlled, allowing the same network condition to be replayed and compared across experiments.
+<p align="center"><img src="figures/ccl-wan-control-timescales.png" width="720" alt="Collective schedules and WAN paths adapt at different timescales"></p>
 
-## 3. From an FSDP tensor to WAN transfers
+- **Fast WAN adaptation** steers ready RDMA traffic around short-lived congestion.
+- **Slower schedule adaptation** changes transfer ordering and channel assignment when network conditions persist.
 
-FSDP starts with a global model payload. With four workers, each rank owns one quarter of that payload. The collective schedule divides each shard into smaller subchunks and decides how those subchunks move between workers and across WAN paths.
+Neither layer is sufficient alone: a good path cannot accelerate data that the schedule has not released, while a parallel schedule cannot overcome a persistently congested path.
 
-![How the global All-Gather payload becomes scheduled subchunks](figures/fsdp-workload-granularity.png)
+Agents observe data-plane interfaces across the WAN and report synchronized per-link telemetry to a collector.
 
-This distinction matters:
-
-- **FSDP** determines what distributed model data is needed;
-- **NCCL/MSCCL** determines how collective transfers are organized;
-- **RoCEv2 RDMA** carries the data between GPU nodes;
-- the **WAN** determines what network capacity and paths are available to those transfers.
-
-The project connects these layers into one observable system instead of evaluating them in isolation.
-
-## 4. The end-to-end GPU-to-GPU data path
-
-The training workers use RDMA-capable network interfaces. GPU memory is registered for RDMA, allowing the RNIC to transfer collective payloads along the data path without treating the WAN emulator as a training endpoint.
-
-![End-to-end RoCEv2 and GPUDirect RDMA data path](figures/rocev2-gpudirect-data-path.png)
-
-The complete data path is:
+<p align="center"><img src="figures/wan-telemetry-architecture.png" width="620" alt="Network telemetry collection across the WAN data plane"></p>
 
 ```text
-GPU memory
-   ↓
-NCCL / MSCCL collective channel
-   ↓
-GPUDirect RDMA and the local RNIC
-   ↓
-RoCEv2 over the IP network
-   ↓
-programmable OVS/Mininet WAN
-   ↓
-remote RNIC and remote GPU memory
+FSDP workload → collective schedule → RDMA transfers → WAN paths
+       ↑                                             ↓
+       └──── analysis and adaptation ← telemetry ───┘
 ```
 
-This is why the project is an **end-to-end distributed AI systems testbed**, rather than only a network simulation or a standalone collective benchmark.
+## 4. From an FSDP tensor to WAN transfers
 
-The data path is also checked at runtime. With GPUDirect RDMA enabled, NCCL selects direct GPU-memory access through the RNIC instead of staging the payload through host memory.
+With four workers, each rank owns one quarter of the global payload. The collective schedule divides each shard into subchunks and determines when, where, and over which channel each subchunk moves.
 
-![Runtime evidence that NCCL selected GPUDirect RDMA](figures/nccl-gpudirect-runtime.png)
+<p align="center"><img src="figures/fsdp-workload-granularity.png" width="500" alt="How the global All-Gather payload becomes scheduled subchunks"></p>
 
-## 5. Why UDP destination port 4791 is special
+- **FSDP** determines which distributed model data is required.
+- **NCCL/MSCCL** organizes collective transfers and dependencies.
+- **RoCEv2 RDMA** carries data between GPU nodes.
+- The **WAN** supplies paths and time-varying capacity.
 
-RoCEv2 encapsulates RDMA transport in UDP/IP and conventionally uses **UDP destination port 4791**.
+## 5. End-to-end GPU-to-GPU data path
 
-That port has special meaning to an RDMA-capable NIC. At a GPU endpoint, this is exactly what is needed: the RNIC recognizes the packet as RoCEv2 and processes the RDMA transport.
+GPU memory is registered for RDMA so the RNIC can move collective payloads directly. The WAN remains a transit network rather than a training endpoint.
 
-The WAN node is different. It must act as an IP transit device, not as the final RDMA endpoint. If a WAN-facing NIC consumes UDP/4791 locally as RoCEv2 traffic, the packet cannot traverse the emulated WAN correctly.
+<p align="center"><img src="figures/rocev2-gpudirect-data-path.png" width="760" alt="End-to-end RoCEv2 and GPUDirect RDMA data path"></p>
 
-![Making RoCEv2 UDP 4791 forwardable through the WAN node](figures/udp4791-transit-forwarding.png)
+```text
+GPU memory → NCCL/MSCCL → GPUDirect RDMA → local RNIC
+           → programmable WAN → remote RNIC → remote GPU memory
+```
 
-The testbed therefore separates the two roles:
+Runtime evidence verifies that NCCL selected direct GPU-memory access instead of staging the payload through host memory.
 
-- GPU-node RNICs retain RoCEv2 endpoint behavior;
-- WAN-facing transit ports treat the traffic as forwardable IP/UDP;
-- the original end-to-end RoCEv2 packet remains intact between GPU workers.
+<p align="center"><img src="figures/nccl-gpudirect-runtime.png" width="760" alt="Runtime evidence that NCCL selected GPUDirect RDMA"></p>
 
-This detail is essential: the middle of the network must forward RoCEv2 traffic without terminating the RDMA connection.
+## 6. Why UDP destination port 4791 is special
 
-## 6. Two layers shape the same collective transfer
+RoCEv2 conventionally uses UDP destination port **4791**. A GPU endpoint should recognize and terminate the RDMA transport. A WAN node must instead forward the packet as transit IP traffic without consuming it as a local RDMA endpoint.
 
-Once RoCEv2 traffic can cross the WAN, performance still depends on decisions made at two different layers.
+<p align="center"><img src="figures/udp4791-transit-forwarding.png" width="700" alt="Making RoCEv2 UDP 4791 forwardable through the WAN node"></p>
 
-![Collective schedules evolve more slowly than WAN path configurations](figures/ccl-wan-control-timescales.png)
-
-### Collective-communication layer
-
-An MSCCL schedule determines:
-
-- which rank sends each subchunk;
-- which rank receives it;
-- which communication channel carries it;
-- which transfers must wait for earlier transfers;
-- when cross-datacenter traffic becomes ready for transmission.
-
-### WAN layer
-
-The WAN configuration determines:
-
-- which physical path carries a communication channel;
-- the capacity and delay of that path;
-- how background traffic competes for the link;
-- how queueing and congestion affect the RDMA flow.
-
-WAN paths can change quickly, while generating and safely activating a different collective schedule is a slower operation. The testbed exposes both layers so their interaction can be observed under controlled conditions.
+GPU-node RNICs therefore retain RoCEv2 endpoint behavior, while WAN-facing transit ports preserve and forward the original end-to-end packet.
 
 ## 7. Why collective dependencies matter
 
-A collective schedule is not merely a list of messages. Transfers are connected by ordering constraints. A later transfer may not begin until the data it needs has arrived through earlier operations.
+A collective schedule is a dependency graph, not merely a list of messages. Deep dependency chains hide parallelism and can leave WAN capacity idle. Restructuring All-Gather shortens the critical chain and releases useful transfers earlier.
 
-A deep dependency chain can create two problems:
+<p align="center"><img src="figures/all-gather-dependency-levels.png" width="700" alt="Transfer release across collective dependency levels"></p>
 
-1. later WAN transfers remain unavailable even when the network has capacity;
-2. a long tail of intra-datacenter forwarding can delay collective completion after cross-datacenter transfers have finished.
+The central insight is: **available WAN capacity helps only when the collective schedule has a ready transfer that can use it**.
 
-The following figure groups transfers by dependency level. It visualizes how changing the schedule structure can shorten the dependency chain and expose useful transfers earlier, without describing the schedule as a single opaque XML file.
+## 8. Experimental results
 
-![Transfer release across collective dependency levels](figures/all-gather-dependency-levels.png)
+A controlled interaction study separates two contributions: adaptive path steering and a low-dependency, channel-balanced All-Gather schedule. All configurations use the same workload and comparable WAN conditions.
 
-This is the key cross-layer insight: **available WAN capacity is useful only when the collective schedule has a ready transfer that can use it**.
+<p align="center"><img src="figures/final-interaction-results.png" width="760" alt="All-Gather latency across path and schedule configurations"></p>
 
-## 8. What the testbed makes observable
+| Configuration | All-Gather latency | Training-step time | AG reduction | Step-time reduction |
+|---|---:|---:|---:|---:|
+| Current schedule + baseline paths | 3275.8 ms | 9575.6 ms | — | — |
+| Current schedule + adaptive paths | 2785.4 ms | 8488.9 ms | 15.0% | 11.3% |
+| Low-dependency schedule + baseline paths | 2351.4 ms | 8568.9 ms | 28.2% | 10.5% |
+| Low-dependency schedule + adaptive paths | **2135.0 ms** | **7906.3 ms** | **34.8%** | **17.4%** |
 
-The platform brings together measurements from training, collective communication, RDMA, and the WAN:
+### What the results mean
 
-- training-step and collective timing;
-- collective payload and subchunk configuration;
-- active communication channels;
-- selected WAN paths;
-- per-interface transmitted and received rates;
-- queue, drop, and congestion indicators;
-- background load and available path capacity.
+- **Path steering removes transient network waste:** with the original schedule unchanged, it reduces All-Gather latency by 15.0%.
+- **Schedule redesign exposes communication parallelism:** with baseline paths unchanged, it reduces All-Gather latency by 28.2%.
+- **The mechanisms are complementary:** combining both reduces All-Gather latency by 34.8% and complete training-step time by 17.4%.
+- **The gain does not come from sending less model data:** the redesigned schedule preserves approximately the same cross-datacenter traffic volume.
 
-This allows an observed slowdown to be traced across layers instead of being attributed vaguely to “the network” or “the GPUs.”
+The benefit persists as the global All-Gather payload grows, rather than appearing at only one tensor size.
 
-![Network telemetry collection across the WAN data plane](figures/wan-telemetry-architecture.png)
+<p align="center"><img src="figures/payload-sensitivity.png" width="620" alt="All-Gather latency across payload sizes"></p>
 
-## 9. A repeatable experimental workflow
+The system-level conclusion is that optimizing either the collective schedule or the WAN alone leaves performance on the table; coordinating both layers shortens the communication critical path and translates that gain into faster training steps.
 
-The high-level workflow is:
+## 9. Repeatable experimental workflow
 
-1. configure a distributed FSDP workload;
-2. define the WAN topology and replayable network conditions;
-3. run the real NCCL/MSCCL and RoCEv2 communication path;
-4. collect synchronized training and network telemetry;
-5. verify that the intended path and communication configuration executed;
-6. compare configurations under the same workload and WAN condition;
-7. use the evidence to identify the next bottleneck.
+1. Configure a distributed FSDP workload.
+2. Define the WAN topology and replayable conditions.
+3. Run the real NCCL/MSCCL and RoCEv2 path.
+4. Collect synchronized training and network telemetry.
+5. Verify executed paths, payload, and collective configuration.
+6. Compare configurations under the same workload and WAN condition.
+7. Trace the remaining bottleneck across dependencies and network behavior.
 
-Repeatability is a core requirement. Without controlled replay and end-to-end observation, a faster run could simply be the result of a different background-traffic window rather than a better system design.
+Controlled replay and end-to-end validation prevent a faster run from being mistaken for a better design when it merely encountered a different traffic window.
 
 ## Technical scope
 
@@ -187,13 +137,11 @@ Repeatability is a core requirement. Without controlled replay and end-to-end ob
 | Collective communication | All-Gather, Reduce-Scatter, NCCL, MSCCL schedules |
 | High-performance networking | RoCEv2, RDMA, GPUDirect RDMA, RNICs |
 | WAN experimentation | Multipath forwarding, bandwidth, delay, queues, background traffic |
-| Systems analysis | Cross-layer telemetry, dependency analysis, repeatable validation |
+| Systems analysis | Cross-layer telemetry, dependency analysis, controlled validation |
 
 ## Repository scope
 
-This repository is a **code-free technical presentation** of the testbed architecture and the systems problems it studies.
-
-It intentionally excludes source code, private infrastructure details, raw experiment logs, unpublished manuscripts, and organization-specific information.
+This repository is a **code-free technical presentation** of the testbed architecture, mechanisms, and validated findings. It excludes source code, private infrastructure details, raw logs, manuscripts, and organization-specific information.
 
 ---
 
