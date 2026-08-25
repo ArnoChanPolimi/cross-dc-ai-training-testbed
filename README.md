@@ -12,9 +12,9 @@ This testbed connects the complete chain—from PyTorch FSDP tensors, through NC
 
 **PyTorch Fully Sharded Data Parallel (FSDP)** divides model state across workers. Before computation, **All-Gather** reconstructs the required parameter on every worker. During backpropagation, **Reduce-Scatter** aggregates gradients and returns the appropriate reduced shard.
 
-<p align="center"><img src="figures/fsdp-all-gather.png" width="680" alt="All-Gather reconstructs the complete parameter on every GPU"></p>
+<p align="center"><img src="figures/fsdp-all-gather.png" width="520" alt="All-Gather reconstructs the complete parameter on every GPU"></p>
 
-<p align="center"><img src="figures/fsdp-reduce-scatter.png" width="680" alt="Reduce-Scatter aggregates gradients and returns one shard to each GPU"></p>
+<p align="center"><img src="figures/fsdp-reduce-scatter.png" width="520" alt="Reduce-Scatter aggregates gradients and returns one shard to each GPU"></p>
 
 ```text
 All-Gather → forward compute → backward compute → Reduce-Scatter → next step
@@ -53,7 +53,7 @@ FSDP workload → collective schedule → RDMA transfers → WAN paths
 
 With four workers, each rank owns one quarter of the global payload. The collective schedule divides each shard into subchunks and determines when, where, and over which channel each subchunk moves.
 
-<p align="center"><img src="figures/fsdp-workload-granularity.png" width="380" alt="How the global All-Gather payload becomes scheduled subchunks"></p>
+<p align="center"><img src="figures/fsdp-workload-granularity.png" width="300" alt="How the global All-Gather payload becomes scheduled subchunks"></p>
 
 - **FSDP** determines which distributed model data is required.
 - **NCCL/MSCCL** organizes collective transfers and dependencies.
