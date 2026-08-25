@@ -2,6 +2,15 @@
 
 > An end-to-end platform for understanding—and reducing—the communication bottleneck that appears when distributed GPU training crosses a dynamic wide-area network.
 
+## Project information
+
+| | |
+|---|---|
+| **Institution** | Politecnico di Milano, Department of Electronics, Information and Bioengineering (DEIB) |
+| **Laboratory** | [BONSAI Lab — Broadband Optical Networks, Security, and Advanced Internet](https://www.deib.polimi.it/eng/deib-labs/details/52) |
+| **Period** | March 2026 – December 2026 (expected) |
+| **Supervisors** | [Prof. Massimo Tornatore](https://tornatore.faculty.polimi.it/) · [Prof. Qiaolun Zhang](https://qiaolunzhang.github.io/) |
+
 ## Start with the basic problem
 
 Large AI models are commonly trained across multiple GPUs. The GPUs compute locally, but repeatedly exchange parameters and gradients. When workers are split across datacenters, these collective transfers traverse a WAN whose bandwidth, delay, congestion, and available paths change over time.
