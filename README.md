@@ -26,7 +26,7 @@ These operations move large tensors on every step. Slow communication leaves GPU
 
 Across datacenters, collective transfers encounter lower bandwidth, longer delay, competing traffic, congestion, and heterogeneous paths. The testbed places four GPU workers across two logical datacenters and connects them through a programmable multipath WAN. Path capacity, propagation delay, queues, and background load can be controlled and replayed.
 
-<p align="center"><img src="figures/cross-dc-testbed-overview.svg" width="720" alt="Four GPU workers connected through a programmable multipath WAN"></p>
+<p align="center"><img src="figures/cross-dc-testbed-overview.svg" width="560" alt="Four GPU workers connected through a programmable multipath WAN"></p>
 
 ## 3. Closing the loop across two layers
 
@@ -53,7 +53,7 @@ FSDP workload → collective schedule → RDMA transfers → WAN paths
 
 With four workers, each rank owns one quarter of the global payload. The collective schedule divides each shard into subchunks and determines when, where, and over which channel each subchunk moves.
 
-<p align="center"><img src="figures/fsdp-workload-granularity.png" width="500" alt="How the global All-Gather payload becomes scheduled subchunks"></p>
+<p align="center"><img src="figures/fsdp-workload-granularity.png" width="380" alt="How the global All-Gather payload becomes scheduled subchunks"></p>
 
 - **FSDP** determines which distributed model data is required.
 - **NCCL/MSCCL** organizes collective transfers and dependencies.
