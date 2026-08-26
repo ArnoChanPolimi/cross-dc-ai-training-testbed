@@ -1,6 +1,6 @@
-# Cross-Datacenter AI Training Testbed
+# Joint Collective Scheduling and WAN Path Adaptation for Cross-Datacenter AI Training
 
-> An end-to-end platform for understanding—and reducing—the communication bottleneck that appears when distributed GPU training crosses a dynamic wide-area network.
+> An end-to-end experimental platform for coordinating collective communication schedules and RDMA traffic paths under dynamic WAN conditions.
 
 ## Project information
 
