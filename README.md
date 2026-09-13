@@ -31,6 +31,8 @@ Communication on the critical path leaves computation waiting. We therefore meas
 
 ## 2. Why crossing datacenters changes the problem
 
+Compared with an intra-datacenter interconnect, a WAN typically has higher latency; collective transfers must also contend with heterogeneous and time-varying available bandwidth, background traffic, and shared bottlenecks.
+
 The testbed connects four GPU workers across two logical datacenters. Its programmable WAN provides replayable path capacity, delay, queues, and background traffic for controlled comparisons.
 
 <p align="center"><img src="figures/cross-dc-testbed-overview.svg" width="392" alt="Four GPU workers connected through a programmable multipath WAN"></p>
