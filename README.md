@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| **Institution** | Politecnico di Milano, Department of Electronics, Information and Bioengineering (DEIB) |
+| **Institution** | Politecnico di Milano, [Department of Electronics, Information and Bioengineering (DEIB)](https://www.deib.polimi.it/eng/home-page) |
 | **Laboratory** | [BONSAI Lab — Broadband Optical Networks, Security, and Advanced Internet](https://www.deib.polimi.it/eng/deib-labs/details/52) |
 | **Period** | March 2026 – December 2026 (expected) |
 | **Supervisors** | [Prof. Massimo Tornatore](https://tornatore.faculty.polimi.it/) · [Prof. Qiaolun Zhang](https://qiaolunzhang.github.io/) |
