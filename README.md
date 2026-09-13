@@ -11,46 +11,44 @@
 | **Period** | March 2026 – December 2026 (expected) |
 | **Supervisors** | [Prof. Massimo Tornatore](https://tornatore.faculty.polimi.it/) · [Prof. Qiaolun Zhang](https://qiaolunzhang.github.io/) |
 
-## Start with the basic problem
+## Research motivation
 
-Large AI models are commonly trained across multiple GPUs. The GPUs compute locally, but repeatedly exchange parameters and gradients. When workers are split across datacenters, these collective transfers traverse a WAN whose bandwidth, delay, congestion, and available paths change over time.
-
-This testbed connects the complete chain—from PyTorch FSDP tensors, through NCCL/MSCCL and GPUDirect RDMA, to a programmable multipath WAN—so communication decisions and network conditions can be controlled, observed, and evaluated together.
+**How can GPUs across datacenters train efficiently over a changing WAN?** This thesis studies the coordination of collective schedules and network paths on a real GPU testbed.
 
 ## 1. Why training depends on collective communication
 
-**PyTorch Fully Sharded Data Parallel (FSDP)** divides model state across workers. Before computation, **All-Gather** reconstructs the required parameter on every worker. During backpropagation, **Reduce-Scatter** aggregates gradients and returns the appropriate reduced shard.
+<p align="center"><a href="figures/Pre/QA1QA2.svg"><img src="figures/Pre/QA1QA2.svg" width="800" alt="Questions 1 and 2: why distributed training, and why across datacenters?"></a></p>
 
-<p align="center"><img src="figures/fsdp-all-gather.png" width="520" alt="All-Gather reconstructs the complete parameter on every GPU"></p>
+In FSDP, **All-Gather** assembles parameters for computation; **Reduce-Scatter** combines gradients and returns a shard to each worker.
 
-<p align="center"><img src="figures/fsdp-reduce-scatter.png" width="520" alt="Reduce-Scatter aggregates gradients and returns one shard to each GPU"></p>
+<p align="center">
+  <a href="figures/fsdp-all-gather.png"><img src="figures/fsdp-all-gather.png" width="46%" alt="All-Gather: each GPU receives all parameter shards."></a>
+  &nbsp;
+  <a href="figures/fsdp-reduce-scatter.png"><img src="figures/fsdp-reduce-scatter.png" width="46%" alt="Reduce-Scatter: gradient contributions are reduced into one shard per GPU."></a>
+</p>
 
-```text
-All-Gather → forward compute → backward compute → Reduce-Scatter → next step
-```
-
-These operations move large tensors on every step. Slow communication leaves GPUs waiting and directly increases training-step time.
+Communication on the critical path leaves computation waiting. We therefore measure both collective latency and complete training-step time.
 
 ## 2. Why crossing datacenters changes the problem
 
-Across datacenters, collective transfers encounter lower bandwidth, longer delay, competing traffic, congestion, and heterogeneous paths. The testbed places four GPU workers across two logical datacenters and connects them through a programmable multipath WAN. Path capacity, propagation delay, queues, and background load can be controlled and replayed.
+The testbed connects four GPU workers across two logical datacenters. Its programmable WAN provides replayable path capacity, delay, queues, and background traffic for controlled comparisons.
 
-<p align="center"><img src="figures/cross-dc-testbed-overview.svg" width="560" alt="Four GPU workers connected through a programmable multipath WAN"></p>
+<p align="center"><img src="figures/cross-dc-testbed-overview.svg" width="392" alt="Four GPU workers connected through a programmable multipath WAN"></p>
 
 ## 3. Closing the loop across two layers
 
-The collective layer decides which data is ready, where it moves, and which operations depend on earlier transfers. The WAN layer decides which path carries each flow and how much usable capacity that path provides.
+**A better path helps only when data is ready to use it.** This motivates coordinating collective dependencies with WAN path selection.
+
+<p align="center"><a href="figures/Pre/QA3QA4.svg"><img src="figures/Pre/QA3QA4.svg" width="800" alt="Questions 3 and 4: why network optimization alone is insufficient, and how this thesis coordinates collective scheduling with WAN paths."></a></p>
+
+- **Fast WAN adaptation** selects paths for ready RDMA traffic.
+- **Slower schedule adaptation** changes transfer ordering and channel assignment.
 
 <p align="center"><img src="figures/ccl-wan-control-timescales.png" width="720" alt="Collective schedules and WAN paths adapt at different timescales"></p>
 
-- **Fast WAN adaptation** steers ready RDMA traffic around short-lived congestion.
-- **Slower schedule adaptation** changes transfer ordering and channel assignment when network conditions persist.
+Telemetry informs both actions; coordinated updates keep paths and schedule versions consistent. Their benefit must outweigh the observation and update costs.
 
-Neither layer is sufficient alone: a good path cannot accelerate data that the schedule has not released, while a parallel schedule cannot overcome a persistently congested path.
-
-Agents observe data-plane interfaces across the WAN and report synchronized per-link telemetry to a collector.
-
-<p align="center"><img src="figures/wan-telemetry-architecture.png" width="620" alt="Network telemetry collection across the WAN data plane"></p>
+<p align="center"><img src="figures/wan-telemetry-architecture.png" width="434" alt="Network telemetry collection across the WAN data plane"></p>
 
 ```text
 FSDP workload → collective schedule → RDMA transfers → WAN paths
